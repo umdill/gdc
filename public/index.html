@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multiplayer Dash Full</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>body { margin: 0; background: #000; }</style>
+</head>
+<body>
+<script>
+    const config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 400,
+        physics: { default: 'arcade', arcade: { gravity: { y: 1400 } } },
+        scene: { preload, create, update }
+    };
+
+    const game = new Phaser.Game(config);
+    let player, cursors, socket, otherPlayers = {};
+
+    function preload() {
+        this.textures.addCanvas('cube', drawRect(32, 32, 0x00ff00));
+        this.textures.addCanvas('ghost', drawRect(32, 32, 0xffffff));
+        this.textures.addCanvas('ground', drawRect(5000, 40, 0x333333));
+        this.textures.addCanvas('spike', drawTri(30, 0xff4444));
+    }
+
+    function create() {
+        socket = io();
+        
+        // 1. World Setup
+        this.physics.world.setBounds(0, 0, 5000, 400);
+        let ground = this.physics.add.staticGroup();
+        ground.create(2500, 380, 'ground');
+
+        // 2. Add Spikes across the level
+        let spikes = this.physics.add.staticGroup();
+        [600, 900, 1200, 1500, 1800, 2100].forEach(x => spikes.create(x, 350, 'spike'));
+
+        // 3. Player Setup
+        player = this.physics.add.sprite(100, 300, 'cube');
+        player.setCollideWorldBounds(true);
+        this.physics.add.collider(player, ground);
+        this.physics.add.overlap(player, spikes, () => {
+            player.setPosition(100, 300);
+            this.cameras.main.shake(100, 0.01);
+        });
+
+        // 4. Camera Follow
+        this.cameras.main.setBounds(0, 0, 5000, 400);
+        this.cameras.main.startFollow(player, true, 0.1, 0.1);
+
+        cursors = this.input.keyboard.createCursorKeys();
+
+        // 5. Socket Listeners
+        socket.on('currentPlayers', (players) => {
+            Object.keys(players).forEach(id => {
+                if (id !== socket.id) addOtherPlayer(this, id, players[id]);
+            });
+        });
+
+        socket.on('playerMoved', (data) => {
+            if (otherPlayers[data.id]) otherPlayers[data.id].setPosition(data.x, data.y);
+        });
+
+        socket.on('playerDisconnected', id => {
+            if (otherPlayers[id]) { otherPlayers[id].destroy(); delete otherPlayers[id]; }
+        });
+    }
+
+    function update() {
+        player.setVelocityX(250); // Move right automatically
+        if ((cursors.space.isDown || cursors.up.isDown) && player.body.touching.down) {
+            player.setVelocityY(-550);
+        }
+        socket.emit('playerMovement', { x: player.x, y: player.y });
+    }
+
+    function addOtherPlayer(scene, id, info) {
+        let other = scene.add.sprite(info.x, info.y, 'ghost').setTint(info.color);
+        otherPlayers[id] = other;
+    }
+
+    function drawRect(w, h, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
+        ctx.fillRect(0, 0, w, h);
+        return canvas;
+    }
+
+    function drawTri(s, color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = s; canvas.height = s;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
+        ctx.beginPath(); ctx.moveTo(s/2, 0); ctx.lineTo(0, s); ctx.lineTo(s, s); ctx.fill();
+        return canvas;
+    }
+</script>
+</body>
+</html>
